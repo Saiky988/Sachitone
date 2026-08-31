@@ -172,7 +172,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const dataArray = dataArrayRef.current;
 
     if (analyser && dataArray) {
-      analyser.getByteFrequencyData(dataArray);
+      analyser.getByteFrequencyData(dataArray as any);
 
       // 1. Sub-bass & Kick (bins 1-8: ~20Hz - 180Hz)
       let bassSum = 0;
