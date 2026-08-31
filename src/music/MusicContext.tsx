@@ -4,10 +4,19 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { profile } from "../data/profile";
+
+export type AudioFrequencyData = {
+  bass: number;    // 0.0 to 1.0 (sub-bass & kick drum peak)
+  mid: number;     // 0.0 to 1.0 (vocals, snare, chords)
+  treble: number;  // 0.0 to 1.0 (hi-hats, sparkle)
+  level: number;   // 0.0 to 1.0 (overall energy)
+  isPlaying: boolean;
+};
 
 type MusicContextValue = {
   playing: boolean;
@@ -20,13 +29,13 @@ type MusicContextValue = {
   seek: (t: number) => void;
   setMuted: (m: boolean) => void;
   setVolume: (v: number) => void;
+  getAudioData: () => AudioFrequencyData;
 };
 
 const MusicContext = createContext<MusicContextValue | null>(null);
 
 export function MusicProvider({ children }: { children: ReactNode }) {
-  // The audio element is created once, lazily, without autoplay: music only
-  // starts after an explicit user interaction (browser policies block the rest).
+  // Local audio file with full same-origin Web Audio API analyser access
   const [audio] = useState(() => {
     if (typeof window === "undefined") return null;
     const el = new Audio(profile.music.src);
@@ -42,9 +51,48 @@ export function MusicProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(0.8);
   const [error, setError] = useState(false);
 
+  // Web Audio API refs
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const sourceConnectedRef = useRef(false);
+
+  // Initialize Web Audio API on first user play
+  const initWebAudio = useCallback(() => {
+    if (!audio || typeof window === "undefined" || sourceConnectedRef.current) return;
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+
+      const ctx = new AudioCtx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.72; // Snappy transient response
+
+      const source = ctx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(ctx.destination);
+
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+      sourceConnectedRef.current = true;
+    } catch {
+      // Fallback seamlessly if any browser permission occurs
+    }
+  }, [audio]);
+
   useEffect(() => {
     if (!audio) return;
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      initWebAudio();
+      if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      setPlaying(true);
+    };
     const onPause = () => setPlaying(false);
     const onTime = () => setCurrentTime(audio.currentTime);
     const onMeta = () => {
@@ -53,12 +101,14 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       }
     };
     const onError = () => setError(true);
+
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("loadedmetadata", onMeta);
     audio.addEventListener("durationchange", onMeta);
     audio.addEventListener("error", onError);
+
     return () => {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
@@ -67,17 +117,21 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener("durationchange", onMeta);
       audio.removeEventListener("error", onError);
       audio.pause();
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
     };
-  }, [audio]);
+  }, [audio, initWebAudio]);
 
   const toggle = useCallback(() => {
     if (!audio || error) return;
     if (audio.paused) {
+      initWebAudio();
       audio.play().catch(() => setError(true));
     } else {
       audio.pause();
     }
-  }, [audio, error]);
+  }, [audio, error, initWebAudio]);
 
   const seek = useCallback(
     (t: number) => {
@@ -108,6 +162,58 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     [audio],
   );
 
+  // Real-time Audio Spectrum extraction
+  const getAudioData = useCallback((): AudioFrequencyData => {
+    if (!playing || !audio) {
+      return { bass: 0, mid: 0, treble: 0, level: 0, isPlaying: false };
+    }
+
+    const analyser = analyserRef.current;
+    const dataArray = dataArrayRef.current;
+
+    if (analyser && dataArray) {
+      analyser.getByteFrequencyData(dataArray);
+
+      // 1. Sub-bass & Kick (bins 1-8: ~20Hz - 180Hz)
+      let bassSum = 0;
+      const bassCount = 8;
+      for (let i = 1; i <= bassCount; i++) {
+        bassSum += dataArray[i];
+      }
+      const rawBass = bassSum / (bassCount * 255);
+      // Power curve for punchy, impactful kick beats
+      const bass = Math.pow(rawBass, 1.6) * 1.35;
+
+      // 2. Mids / Vocals / Snare (bins 9-36: ~200Hz - 1600Hz)
+      let midSum = 0;
+      const midCount = 28;
+      for (let i = 9; i <= 9 + midCount; i++) {
+        midSum += dataArray[i];
+      }
+      const mid = Math.pow(midSum / (midCount * 255), 1.2);
+
+      // 3. Treble / Hi-hats / Air (bins 37-120: ~1700Hz - 9000Hz)
+      let trebleSum = 0;
+      const trebleCount = 60;
+      for (let i = 37; i <= 37 + trebleCount; i++) {
+        trebleSum += dataArray[i];
+      }
+      const treble = Math.pow(trebleSum / (trebleCount * 255), 1.1) * 1.2;
+
+      const level = Math.min(1.0, bass * 0.5 + mid * 0.35 + treble * 0.15);
+
+      return {
+        bass: Math.min(1.2, bass),
+        mid: Math.min(1.0, mid),
+        treble: Math.min(1.0, treble),
+        level: Math.min(1.0, level),
+        isPlaying: true,
+      };
+    }
+
+    return { bass: 0, mid: 0, treble: 0, level: 0, isPlaying: true };
+  }, [playing, audio]);
+
   const value = useMemo(
     () => ({
       playing,
@@ -120,8 +226,9 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       seek,
       setMuted,
       setVolume,
+      getAudioData,
     }),
-    [playing, currentTime, duration, muted, volume, error, toggle, seek, setMuted, setVolume],
+    [playing, currentTime, duration, muted, volume, error, toggle, seek, setMuted, setVolume, getAudioData],
   );
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;

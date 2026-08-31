@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Loader } from "./components/Loader";
 import { Background } from "./components/Background";
 import { CursorLight } from "./components/CursorLight";
@@ -9,13 +9,12 @@ import { RobloxSection } from "./components/RobloxSection";
 import { SocialsSection } from "./components/SocialsSection";
 import { Footer } from "./components/Footer";
 import { MusicPlayer } from "./components/MusicPlayer";
-import { VideoControls } from "./components/VideoControls";
 import { MusicProvider } from "./music/MusicContext";
+import { useSmoothScroll } from "./hooks/useSmoothScroll";
 
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [videoFailed, setVideoFailed] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  useSmoothScroll();
 
   return (
     <MusicProvider>
@@ -24,7 +23,7 @@ export default function App() {
       </a>
       <Loader onReveal={() => setReady(true)} />
       <CursorLight />
-      <Background videoRef={videoRef} onVideoError={() => setVideoFailed(true)} />
+      <Background />
       <Navigation />
       <main id="main">
         <Hero ready={ready} />
@@ -33,10 +32,9 @@ export default function App() {
           <RobloxSection />
           <SocialsSection />
         </div>
+        <Footer />
       </main>
-      <Footer />
       <MusicPlayer />
-      {!videoFailed && <VideoControls videoRef={videoRef} />}
       <div className="grain" aria-hidden="true" />
     </MusicProvider>
   );

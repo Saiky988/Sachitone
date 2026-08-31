@@ -67,9 +67,6 @@ export const profile = {
   ] as ProfileLink[],
   music: {
     title: "Favorite Song",
-    src: "https://r2.guns.lol/23ea2c17-02b6-46ed-a87a-ab4b04be7c08.mp3",
-  },
-  backgroundVideo: {
-    src: "https://r2.guns.lol/6b3a753e-869a-4528-a394-3a8ebe4adca7.mov",
+    src: "/music.mp3",
   },
 } as const;
