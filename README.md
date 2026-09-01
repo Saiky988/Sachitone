@@ -1,4 +1,4 @@
-# SACHITONE — Archived Roblox Profile
+# SACHITONE
 
 A dark, cinematic digital archive preserving the Roblox identity of Sachitone.
 Built with React 19 + Vite + TypeScript + Tailwind CSS 4.
